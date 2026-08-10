@@ -5,7 +5,14 @@ const dotenv = require("dotenv");
 const dns = require("node:dns/promises");
 
 dotenv.config();
-dns.setServers(["1.1.1.1", "1.0.0.1"]);
+
+// Some local ISPs fail to resolve MongoDB Atlas SRV records, so we force a
+// public resolver in development. Hosting platforms provide a working resolver
+// of their own, and overriding it there breaks the Mongo connection.
+if (process.env.NODE_ENV !== "production") {
+  dns.setServers(["1.1.1.1", "1.0.0.1"]);
+}
+
 const authRoutes = require("./routes/auth");
 const eventRoutes = require("./routes/events");
 const bookingRoutes = require("./routes/bookings");
@@ -13,8 +20,24 @@ const bookingRoutes = require("./routes/bookings");
 const app = express();
 
 // Middleware
-app.use(cors());
+const allowedOrigins = (process.env.CLIENT_URL || "http://localhost:5173")
+  .split(",")
+  .map((origin) => origin.trim())
+  .filter(Boolean);
+
+app.use(
+  cors({
+    origin: (origin, callback) => {
+      // Allow non-browser clients (curl, Postman) which send no Origin header.
+      if (!origin || allowedOrigins.includes(origin)) return callback(null, true);
+      callback(new Error(`Not allowed by CORS: ${origin}`));
+    },
+  })
+);
 app.use(express.json());
+
+// Health check, also used to keep the free-tier instance warm
+app.get("/api/health", (req, res) => res.json({ status: "ok" }));
 
 // Routes
 app.use("/api/auth", authRoutes);
